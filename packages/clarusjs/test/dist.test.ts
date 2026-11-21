@@ -73,11 +73,12 @@ test('the clarusjs command is built, with a shebang', () => {
   expect(readFileSync(bin, 'utf8').startsWith('#!/usr/bin/env node')).toBe(true)
 })
 
-// 80 / 290 KB: the navigation module, its shared guard and redirects (#169) took the package past 70 / 250 KB.
-test('size budget: the published package stays small (tarball 80 KB, unpacked 290 KB)', () => {
+// 90 / 320 KB: the TypeScript epic (#211: page sources in check, local types, reactive inputs, two-way binding) took
+// the package past 80 / 290 KB. 80 / 290 KB before: the navigation epic (#169); 70 / 250 KB before that.
+test('size budget: the published package stays small (tarball 90 KB, unpacked 320 KB)', () => {
   const [info] = JSON.parse(execSync('npm pack --dry-run --json --ignore-scripts', { cwd: pkgDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }))
-  expect(info.size, `tarball ${info.size} B`).toBeLessThanOrEqual(80 * 1024)
-  expect(info.unpackedSize, `unpacked ${info.unpackedSize} B`).toBeLessThanOrEqual(290 * 1024)
+  expect(info.size, `tarball ${info.size} B`).toBeLessThanOrEqual(90 * 1024)
+  expect(info.unpackedSize, `unpacked ${info.unpackedSize} B`).toBeLessThanOrEqual(320 * 1024)
 })
 
 test('#197: sideEffects lists only the browser scripts that start work when loaded (bundlers drop the rest when unused)', () => {

@@ -63,7 +63,7 @@ Releases are automated from `main` (see RELEASE.md): never run `npm publish` or 
 - **Errors are located.** Compile errors are `ClarusError` with `file:line:col message`. Never let a raw acorn error escape.
 - **Compiled output stays readable.** Exact-output tests in `test/compiler/emit-*.test.ts` pin it; update them deliberately.
 - **Tests first.** Write the failing test, watch it fail, then implement. Bug fixes start with a reproducing test.
-- **Size budgets are tests.** Browser runtime ≤ 5 KB gzip, a fixture site's JavaScript ≤ 6 KB gzip, published tarball ≤ 80 KB (unpacked ≤ 290 KB), dependencies exactly `acorn` (compiler) and `commander` (CLI), and no compiler or CLI code in browser assets (`test/build.test.ts`, `test/dist.test.ts`). Raising a budget or adding a dependency is a deliberate, explained change in its own PR.
+- **Size budgets are tests.** Browser runtime ≤ 5 KB gzip, a fixture site's JavaScript ≤ 6 KB gzip, published tarball ≤ 90 KB (unpacked ≤ 320 KB), dependencies exactly `acorn` (compiler) and `commander` (CLI), and no compiler or CLI code in browser assets (`test/build.test.ts`, `test/dist.test.ts`). Raising a budget or adding a dependency is a deliberate, explained change in its own PR.
 - **Keep it small.** No new runtime dependencies beyond `acorn` (compiler) and `commander` (CLI); neither may reach a browser bundle. Deliberate shortcuts get a `ponytail:` comment naming the limit and the upgrade path.
 
 ## The docs site is the proving ground
