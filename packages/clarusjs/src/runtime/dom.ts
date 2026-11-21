@@ -324,5 +324,43 @@ export function attr(ctx: Ctx, index: number, name: string, fn: () => unknown, t
     const v = attrValue(name, fn(), tag)
     if (v === null) el.removeAttribute(name)
     else el.setAttribute(name, v === true ? '' : v)
+    // A form field shows its property once someone has typed or clicked in it, not the attribute: set both.
+    if (name === 'value' && 'value' in el) (el as HTMLInputElement).value = v === null || v === true ? '' : v
+    if (name === 'checked' && 'checked' in el) (el as HTMLInputElement).checked = v !== null
   })
+}
+
+/**
+ * A @model input: writing it asks the parent island to update its state (a bubbling, cancelable cl:model event from
+ * the island); when no parent takes it (a top-level island), the input keeps the value itself. New props from the
+ * parent set it with own().
+ */
+export function modelInput<T>(root: Element, name: string, initial: T): Signal<T> & { own(value: T): void } {
+  const value = state(initial)
+  return {
+    initial,
+    get: value.get,
+    own: value.set,
+    set(next) {
+      if (root.dispatchEvent(new CustomEvent('cl:model', { detail: { name, value: next }, bubbles: true, cancelable: true }))) value.set(next)
+    },
+  }
+}
+
+/** [(name)]="…" on a child island in region `index`: the child's writes to its @model name arrive here. */
+export function model(ctx: Ctx, index: number, name: string, set: (value: unknown) => void): void {
+  const r = scan(ctx).regions[index]
+  if (!r) return
+  const host = r.start.parentNode!
+  const listen = (event: Event) => {
+    const detail = (event as CustomEvent<{ name: string; value: unknown }>).detail
+    const from = event.target as Node
+    // Only from inside this region: 4 = the target follows the start marker, 2 = it precedes the end marker.
+    if (detail.name !== name || !(r.start.compareDocumentPosition(from) & 4) || !(r.end.compareDocumentPosition(from) & 2)) return
+    event.preventDefault()
+    event.stopPropagation()
+    set(detail.value)
+  }
+  host.addEventListener('cl:model', listen)
+  onDispose(() => host.removeEventListener('cl:model', listen))
 }

@@ -98,3 +98,12 @@
 /* Components inside islands: the hue picker demo. */
 .hue-picker { display: flex; align-items: center; gap: 12px; margin: 16px 0; }
 .swatch { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--rule); border-left: 12px solid hsl(var(--hue) 70% 50%); }
+
+/* Forms guide: the sign-up demo. */
+.signup { display: grid; gap: 12px; max-width: 420px; margin: 16px 0; padding: 16px; border: 1px solid var(--rule); border-radius: 12px; }
+.text-field { display: grid; gap: 4px; }
+.text-field span { font-size: 14px; color: var(--muted); }
+.text-field input, .text-field select { font: inherit; padding: 6px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--fg); }
+.signup .check { display: flex; gap: 8px; align-items: center; }
+.signup-summary { margin: 0; }
+.signup-reset { justify-self: start; }

@@ -24,6 +24,8 @@ export function emitClient(ir: ComponentIR): string {
     hasBlocks && 'block as __cl_block',
     hasFors && 'forBlock as __cl_for',
     hasRegions && 'region as __cl_region',
+    all.some((n) => n.kind === 'component' && !!n.models?.length) && 'model as __cl_model',
+    kinds.has('model') && 'modelInput as __cl_modelInput',
     // Branch and row HTML is rendered in the browser with the same helpers as on the server.
     rendersHtml && 'escape as __cl_escape',
     rendersHtml && all.some((n) => n.kind === 'attr') && 'attrHtml as __cl_attrHtml',
@@ -43,16 +45,21 @@ export function emitClient(ir: ComponentIR): string {
   for (const line of ir.scriptImports) out += `${line}\n`
   out += `\nexport function attach(__cl_root, __cl_props = {}, __cl_state) {\n`
   // Inputs: read-only signals (writes are compile errors), set from props now and by the returned update.
-  const inputs = ir.inputs.filter((i) => ir.signals.get(i.name) === 'input')
+  const inputs = ir.inputs.filter((i) => ir.signals.get(i.name) === 'input' || ir.signals.get(i.name) === 'model')
   const value = (i: (typeof inputs)[number], from: string) =>
     i.default === undefined ? `${from}.${i.name}` : `${from}.${i.name} === undefined ? (${rewriteClientExpr(i.default, ir.signals)}) : ${from}.${i.name}`
-  for (const i of inputs) out += `  const ${i.name} = state(${value(i, '__cl_props')})\n`
+  // A @model input writes to the parent island (a cl:model event); new props set it with own().
+  for (const i of inputs) {
+    out += i.model
+      ? `  const ${i.name} = __cl_modelInput(__cl_root, ${JSON.stringify(i.name)}, ${value(i, '__cl_props')})\n`
+      : `  const ${i.name} = state(${value(i, '__cl_props')})\n`
+  }
   out += inputsLine({ ...ir, inputs: ir.inputs.filter((i) => !inputs.includes(i)) })
   if (ir.script) out += indentScript(rewriteClient(ir.script, ir.signals, { stateFromServer: true }))
   const lines = wiring(ir, ir.nodes, undefined, '__cl_root', ir.signals, 0)
   if (lines.length) out += '\n' + lines.map((l) => `  ${l}\n`).join('')
   // New props from a parent island: each input follows (the loader keeps this, and the parent calls it in place).
-  if (inputs.length) out += `  return (__cl_p) => {\n${inputs.map((i) => `    ${i.name}.set(${value(i, '__cl_p')})\n`).join('')}  }\n`
+  if (inputs.length) out += `  return (__cl_p) => {\n${inputs.map((i) => `    ${i.name}.${i.model ? 'own' : 'set'}(${value(i, '__cl_p')})\n`).join('')}  }\n`
   return out + '}\n'
 }
 
@@ -89,6 +96,8 @@ function wiring(ir: ComponentIR, nodes: IRNode[], scope: string | undefined, ctx
     if (n.kind === 'component' && n.region >= 0) {
       const content = [...n.children, ...n.fills.flatMap((f) => f.nodes)]
       lines.push(`__cl_region(${ctx}, ${n.region}, () => ${componentCall(n, rw)}, ${fn('', wiring(ir, content, `c${n.region}`, ctx, signals, depth))})`)
+      // [(x)]: the child island's writes to its @model x come back here and update this island's state.
+      for (const m of n.models ?? []) lines.push(`__cl_model(${ctx}, ${n.region}, ${JSON.stringify(m.name)}, (__cl_v) => { ${rewriteClient(m.set, signals).trim()} })`)
     }
     if (n.kind === 'if' && n.block >= 0) {
       const branches = n.branches.map((b, i) =>

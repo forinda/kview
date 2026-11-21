@@ -5,6 +5,7 @@ export type Attr =
   | { kind: 'static'; name: string; value: string | true; start: number }
   | { kind: 'event'; name: string; expr: string; start: number } // (click)="..."
   | { kind: 'prop'; name: string; expr: string; start: number } // [start]="..."
+  | { kind: 'model'; name: string; expr: string; start: number } // [(value)]="form.name": two-way binding
   | { kind: 'interp'; name: string; parts: (string | { expr: string; start: number })[]; start: number } // a="x {{ y }}"
 export type TemplateNode =
   | { type: 'element'; tag: string; attrs: Attr[]; children: TemplateNode[]; start: number }
@@ -14,7 +15,8 @@ export type TemplateNode =
   | { type: 'if'; branches: { cond: string | null; condStart: number; children: TemplateNode[] }[]; start: number }
   | { type: 'fill'; name: string; children: TemplateNode[]; start: number } // @slot('name') { … } inside a component tag
   | { type: 'for'; item: string; list: string; track: string | null; headStart: number; itemStart: number; listStart: number; trackStart: number; children: TemplateNode[]; empty: TemplateNode[] | null; start: number }
-export type InputDecl = { name: string; type: string; default?: string; start: number; nameStart: number; typeStart: number; defaultStart?: number }
+// model: declared with @model, the one kind of input a component may write (two-way binding, [(name)] at the use site).
+export type InputDecl = { name: string; type: string; default?: string; start: number; nameStart: number; typeStart: number; defaultStart?: number; model?: true }
 // @import type { A, B } from '…': types for @input declarations (erased from compiled output, used by type checking).
 export type TypeImport = { clause: string; from: string; start: number; clauseStart: number }
 // @import { a, b } from '…' or @import data from './x.json': values a template uses. Server-only in components
@@ -58,8 +60,8 @@ export function parse(source: string, file: string): ParsedFile {
     const lineStart = i + (source.slice(i, end).length - source.slice(i, end).trimStart().length)
     const line = source.slice(i, end).trim()
     let m: RegExpExecArray | RegExpMatchArray | null
-    if (/^@input\s/.test(line)) {
-      return inputDecl(lineStart)
+    if (/^@(input|model)\s/.test(line)) {
+      return inputDecl(lineStart, line.startsWith('@model'))
     } else if (/^@(type|interface)\s/.test(line)) {
       return typeDecl(lineStart)
     } else if ((m = IMPORT_TYPE_RE.exec(line))) {
@@ -100,9 +102,10 @@ export function parse(source: string, file: string): ParsedFile {
    * @input name: type = default. The type runs to the first '=' outside brackets that isn't part of '=>'; type and
    * default continue onto the next lines while a bracket is open (an object type, a function, a default object).
    */
-  function inputDecl(lineStart: number): void {
-    const malformed = () => fail('unknown or malformed directive "@input"', i)
-    let pos = lineStart + '@input'.length
+  function inputDecl(lineStart: number, model: boolean): void {
+    const directive = model ? '@model' : '@input'
+    const malformed = () => fail(`unknown or malformed directive "${directive}"`, i)
+    let pos = lineStart + directive.length
     while (source[pos] === ' ' || source[pos] === '\t') pos++
     const name = /^[A-Za-z_$][\w$]*/.exec(source.slice(pos))?.[0] ?? malformed()
     const nameStart = pos
@@ -136,7 +139,7 @@ export function parse(source: string, file: string): ParsedFile {
       if (!value) malformed()
       fallback = { default: value, defaultStart: at }
     }
-    out.inputs.push({ name, type, start: i, nameStart, typeStart, ...fallback })
+    out.inputs.push({ name, type, start: i, nameStart, typeStart, ...fallback, ...(model ? { model: true as const } : {}) })
     i = end
   }
 
@@ -197,6 +200,9 @@ export function parse(source: string, file: string): ParsedFile {
       if (name.startsWith('(') && name.endsWith(')')) {
         if (value === true) fail(`event binding ${name} needs a handler`, start)
         list.push({ kind: 'event', name: name.slice(1, -1), expr: (value as string).trim(), start })
+      } else if (name.startsWith('[(') && name.endsWith(')]')) {
+        if (value === true) fail(`two-way binding ${name} needs a variable or property path`, start)
+        list.push({ kind: 'model', name: name.slice(2, -2), expr: (value as string).trim(), start })
       } else if (name.startsWith('[') && name.endsWith(']')) {
         if (value === true) fail(`binding ${name} needs an expression`, start)
         list.push({ kind: 'prop', name: name.slice(1, -1), expr: (value as string).trim(), start })

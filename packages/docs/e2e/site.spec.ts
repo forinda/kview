@@ -830,6 +830,28 @@ test('inputs: a nested island gets new props in place, keeping its own state', a
   expect(await page.evaluate((el) => el!.isConnected, handle)).toBe(true) // the same element, updated in place
 })
 
+test('forms: field components bound two ways update one state object; native selects and checkboxes too; reset goes back', async ({ page }) => {
+  await page.goto('/guide/forms')
+  const form = page.locator('cl-island[c="signup-form"]')
+  await expect(form).toHaveAttribute('data-cl-ready', '')
+  await expect(page.locator('cl-island[c="text-field"]').first()).toHaveAttribute('data-cl-ready', '')
+  const summary = form.locator('.signup-summary')
+  await expect(summary).toHaveText('Someone (no email) on free.')
+  await expect(form.locator('.signup-reset')).toBeDisabled()
+  const name = form.getByLabel('Name')
+  const nameField = await name.elementHandle()
+  await name.fill('Ada')
+  await form.getByLabel('Email').fill('ada@example.com')
+  await form.getByLabel('Plan').selectOption('pro')
+  await form.getByLabel('Send me updates').check()
+  await expect(summary).toHaveText('Ada (ada@example.com) on pro, with updates. Changed.')
+  await form.locator('.signup-reset').click()
+  await expect(summary).toHaveText('Someone (no email) on free.')
+  await expect(name).toHaveValue('') // the field follows the form
+  await expect(form.getByLabel('Send me updates')).not.toBeChecked()
+  expect(await page.evaluate((el) => el!.isConnected, nameField)).toBe(true) // the same field, updated in place
+})
+
 test('client routes: pushState and replaceState from the page are not page loads', async ({ page }) => {
   await page.goto('/tour/1')
   await expect(page.locator('cl-island[c="theme-toggle"]')).toHaveAttribute('data-cl-ready', '')

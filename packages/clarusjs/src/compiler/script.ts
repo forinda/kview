@@ -4,7 +4,8 @@ import { ClarusError } from './errors.ts'
 
 // state(): local state; derived(): computed; shared(store): a local name for a store's signal (see runtime/signals.ts).
 // input: an @input of an island, a read-only signal its parent updates (see runtime: attach returns an update).
-export type Signals = Map<string, 'state' | 'derived' | 'shared' | 'input'>
+// model: a @model input, the one kind a component may write (writes go to the parent: two-way binding).
+export type Signals = Map<string, 'state' | 'derived' | 'shared' | 'input' | 'model'>
 
 // Minimal ESTree node view; acorn produces ESTree with start/end offsets.
 type N = { type: string; start: number; end: number; [key: string]: any }

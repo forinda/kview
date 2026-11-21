@@ -38,7 +38,7 @@ export function generateTs(source: string, file: string, options: { loader?: str
     copy(t.clause, t.clauseStart)
     emit(` from ${JSON.stringify(t.from)}\n`)
   }
-  for (const imp of parsed.imports) emit(`import type { Inputs as ${alias(imp.name)} } from ${JSON.stringify(`${imp.from}.ts`)}\n`)
+  for (const imp of parsed.imports) emit(`import type { Inputs as ${alias(imp.name)}, Models as ${alias(imp.name)}_M } from ${JSON.stringify(`${imp.from}.ts`)}\n`)
   for (const d of parsed.dataImports) {
     emit('import ')
     copy(d.clause, d.clauseStart)
@@ -71,6 +71,9 @@ export function generateTs(source: string, file: string, options: { loader?: str
     emit('\n')
   }
   emit('}\n')
+  // The inputs a parent may bind two ways ([(name)]): this component's @model ones.
+  const models = parsed.inputs.filter((i) => i.model).map((i) => JSON.stringify(i.name))
+  emit(`export type Models = ${models.length ? models.join(' | ') : 'never'}\n`)
   let loaderSpan: [number, number] | undefined
   if (options.loader) {
     // Params and defaults fill the rest, so load() may return any subset of the inputs, each with the right type.
@@ -84,9 +87,11 @@ export function generateTs(source: string, file: string, options: { loader?: str
   // Inputs are read-only, all the way down: they belong to the parent (copy one into state() to change it here).
   emit('type __cl_Readonly<T> = T extends (...args: any[]) => unknown ? T : T extends object ? { readonly [K in keyof T]: __cl_Readonly<T[K]> } : T\n')
   emit('\nexport default function __cl_check(__cl_props: __cl_Readonly<Inputs>) {\n')
-  if (parsed.inputs.length) {
-    emit('  const { ')
-    parsed.inputs.forEach((input, i) => {
+  // Inputs are constants; @model inputs may be written (the write goes to the parent), so they are `let`.
+  for (const [keyword, list] of [['const', parsed.inputs.filter((x) => !x.model)], ['let', parsed.inputs.filter((x) => x.model)]] as const) {
+    if (!list.length) continue
+    emit(`  ${keyword} { `)
+    list.forEach((input, i) => {
       if (i) emit(', ')
       copy(input.name, input.nameStart)
       if (input.default !== undefined && input.defaultStart !== undefined) {
@@ -106,7 +111,15 @@ export function generateTs(source: string, file: string, options: { loader?: str
     copy(expr, at(expr, start))
     emit('));\n')
   }
-  const attrValueStart = (a: Attr) => a.start + a.name.length + (a.kind === 'static' || a.kind === 'interp' ? 2 : 4)
+  const attrValueStart = (a: Attr) => a.start + a.name.length + (a.kind === 'static' || a.kind === 'interp' ? 2 : a.kind === 'model' ? 6 : 4)
+  // [(x)]="path": the path must be assignable (a state variable or a property path; not a read-only input).
+  const writable = (a: Attr & { expr: string }) => {
+    emit('  ;(() => { (')
+    copy(a.expr, at(a.expr, attrValueStart(a)))
+    emit(') = (')
+    copy(a.expr, at(a.expr, attrValueStart(a)))
+    emit(') });\n')
+  }
 
   function visit(node: TemplateNode): void {
     switch (node.type) {
@@ -155,18 +168,27 @@ export function generateTs(source: string, file: string, options: { loader?: str
           point('__cl_p', node.start)
           emit(`: __cl_Readonly<${alias(node.tag)}> = { `) // a child reads its inputs only, so readonly values fit
           for (const a of node.attrs) {
-            if (a.kind !== 'prop') continue
-            copy(a.name, a.start + 1)
+            if (a.kind !== 'prop' && a.kind !== 'model') continue
+            copy(a.name, a.start + (a.kind === 'model' ? 2 : 1))
             emit(': (')
             copy(a.expr, at(a.expr, attrValueStart(a)))
             emit('), ')
           }
           emit('}; __cl_use(__cl_p) }\n')
+          for (const a of node.attrs) {
+            if (a.kind !== 'model') continue
+            // [(x)] needs @model x in the child.
+            emit('  { const ')
+            point('__cl_m', a.start + 2) // TypeScript reports a wrong initializer at the variable's name
+            emit(`: ${alias(node.tag)}_M = ${JSON.stringify(a.name)}; __cl_use(__cl_m) }\n`)
+            writable(a)
+          }
           node.children.forEach(visit)
           return
         }
         for (const a of node.attrs) {
-          if (a.kind === 'prop') use(a.expr, attrValueStart(a))
+          if (a.kind === 'model') { use(a.expr, attrValueStart(a)); writable(a) }
+          else if (a.kind === 'prop') use(a.expr, attrValueStart(a))
           else if (a.kind === 'interp') {
             for (const p of a.parts) if (typeof p !== 'string') use(p.expr, p.start + 2)
           } else if (a.kind === 'event') {

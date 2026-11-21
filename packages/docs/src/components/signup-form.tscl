@@ -1,0 +1,18 @@
+{{-- A form from field components: one state object, written back copy-on-write; reset needs no cloning. --}}
+@import textField from './text-field.tscl'
+
+<script>
+  let form = state({ name: '', email: '', plan: 'free', updates: false })
+  const initial = form // the starting value, taken from the state itself
+  const changed = derived(() => form !== initial)
+  function reset() { form = initial }
+</script>
+
+<form class="signup" (submit)="$event.preventDefault()">
+  <textField [label]="'Name'" [(value)]="form.name" />
+  <textField [label]="'Email'" [type]="'email'" [(value)]="form.email" />
+  <label class="text-field"><span>Plan</span> <select [(value)]="form.plan"><option value="free">Free</option><option value="pro">Pro</option></select></label>
+  <label class="check"><input type="checkbox" [(checked)]="form.updates"> Send me updates</label>
+  <p class="signup-summary" aria-live="polite">{{ form.name || 'Someone' }} ({{ form.email || 'no email' }}) on {{ form.plan }}{{ form.updates ? ', with updates' : '' }}.{{ changed ? ' Changed.' : '' }}</p>
+  <button type="button" class="signup-reset" (click)="reset()" [disabled]="!changed">Reset</button>
+</form>

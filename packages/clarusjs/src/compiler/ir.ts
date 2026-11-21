@@ -1,6 +1,6 @@
 // Syntax tree → IR: static HTML chunks, holes (reactive or not), child components, events. Build-time checks live here.
 import { ClarusError } from './errors.ts'
-import { importNames, type DataImport, type ImportDecl, type InputDecl, type ParsedFile, type TemplateNode } from './parse.ts'
+import { importNames, type Attr, type DataImport, type ImportDecl, type InputDecl, type ParsedFile, type TemplateNode } from './parse.ts'
 import { analyzeScript, writesTo, checkExpr, checkHandler, referencesNames, scriptNames, splitImports, type Signals } from './script.ts'
 
 export type IRNode =
@@ -9,7 +9,8 @@ export type IRNode =
   // children: content for the default slot; fills: content for named slots (@slot('name') { … }).
   // region: inside an island, a component whose props read state or that wraps content gets markers so the browser
   // can re-render it (-1 otherwise).
-  | { kind: 'component'; name: string; props: { name: string; expr: string }[]; children: IRNode[]; fills: { name: string; nodes: IRNode[] }[]; region: number; attach?: string }
+  // models: [(name)]="path" bindings: each write from the child runs `set` (a statement using __cl_v).
+  | { kind: 'component'; name: string; props: { name: string; expr: string }[]; models?: { name: string; set: string }[]; children: IRNode[]; fills: { name: string; nodes: IRNode[] }[]; region: number; attach?: string }
   // Where a stateless component renders content it is given ('default' or a name); fallback shows when none is given.
   | { kind: 'slot'; name: string; fallback: IRNode[] }
   // A dynamic attribute: [name]="expr" (value) or name="a {{ b }}" (parts, joined into a string).
@@ -40,7 +41,8 @@ const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input'
 
 export function lower(parsed: ParsedFile, file: string, source: string): ComponentIR {
   const fail = (text: string, at: number): never => { throw new ClarusError(text, file, source, at) }
-  const stateful = !!parsed.script
+  // An island: it has a script, or a @model input (which it writes, even from an event handler alone).
+  const stateful = !!parsed.script || parsed.inputs.some((i) => i.model)
   const split = parsed.script ? splitImports(parsed.script.code, file, source, parsed.script.start) : { imports: [], body: '' }
   const signals: Signals = parsed.script ? analyzeScript(split.body, file, source, parsed.script.start) : new Map()
   // A hole is reactive if it reads anything the script declares: a signal directly, or a function/value that may read one.
@@ -48,10 +50,26 @@ export function lower(parsed: ParsedFile, file: string, source: string): Compone
   const scriptScope = parsed.script ? new Set([...signals.keys(), ...scriptNames(parsed.script.code)]) : new Set<string>()
   // An island's inputs are read-only signals its parent updates in place: what reads them is reactive, and writing
   // to one is an error (to change a value locally, copy it into state()).
-  const inputNames = new Set(stateful ? parsed.inputs.map((i) => i.name).filter((name) => !signals.has(name)) : [])
+  const inputNames = new Set(stateful ? parsed.inputs.filter((i) => !i.model).map((i) => i.name).filter((name) => !signals.has(name)) : [])
   for (const name of inputNames) {
     signals.set(name, 'input')
     scriptScope.add(name)
+  }
+  // @model inputs may be written: the write goes to the parent island (or, with none, stays here).
+  for (const i of stateful ? parsed.inputs.filter((x) => x.model && !signals.has(x.name)) : []) {
+    signals.set(i.name, 'model')
+    scriptScope.add(i.name)
+  }
+  /** [(x)]="path": the statement writing `value` back to path, copy-on-write (form = { ...form, name: value }). */
+  const writeBack = (path: string, value: string, name: string, at: number): string => {
+    if (!stateful) fail(`[(${name})] needs a <script> with state to write back to`, at)
+    if (!/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(path)) fail(`[(${name})] needs a variable or a property path (form.name) to write back to, not "${path}"`, at)
+    const parts = path.split('.')
+    let next = value
+    for (let k = parts.length - 1; k >= 1; k--) next = `{ ...${parts.slice(0, k).join('.')}, ${parts[k]}: ${next} }`
+    const statement = `${parts[0]} = ${next}`
+    for (const w of writesTo(statement, inputNames)) readOnly(w.name, at)
+    return statement
   }
   const readOnly = (name: string, at: number): never =>
     fail(`@input ${name} is read-only: inputs belong to the parent. Copy it to change it here: let local = state(${name})`, at)
@@ -143,19 +161,26 @@ export function lower(parsed: ParsedFile, file: string, source: string): Compone
     }
     if (components.has(node.tag)) {
       const props: { name: string; expr: string }[] = []
+      const models: { name: string; set: string }[] = []
       let attach: string | undefined
       for (const a of node.attrs) {
         if (a.kind === 'prop') { checkExpr(a.expr, file, source, a.start); props.push({ name: a.name, expr: a.expr }) }
+        else if (a.kind === 'model') {
+          const set = writeBack(a.expr, '__cl_v', a.name, a.start)
+          checkExpr(a.expr, file, source, a.start)
+          props.push({ name: a.name, expr: a.expr })
+          models.push({ name: a.name, set })
+        }
         else if (a.kind === 'static' && a.name === 'attach') {
           // When the island's code loads in the browser (see runtime/loader.ts).
           if (typeof a.value !== 'string' || !ATTACH_MODES.includes(a.value)) fail(`attach must be one of ${ATTACH_MODES.join(', ')}`, a.start)
           attach = a.value as string
-        } else fail(`component <${node.tag}> only takes [prop] bindings and attach="…"`, a.start)
+        } else fail(`component <${node.tag}> only takes [prop] and [(prop)] bindings and attach="…"`, a.start)
       }
       // Content is rendered here, in this component's scope, and handed to the child for its slots.
       const hasContent = node.children.some((c) => c.type !== 'text' || c.value.trim())
       const readsState = props.some((p) => referencesNames(p.expr, scriptScope) || referencesNames(p.expr, loopNames))
-      const region = stateful && (hasContent || readsState) ? regionCount++ : -1
+      const region = stateful && (hasContent || readsState || models.length > 0) ? regionCount++ : -1
       const parentScope = scopeKey
       if (region >= 0) scopeKey = `c${region}`
       const lowerList = (list: TemplateNode[]) => {
@@ -176,7 +201,7 @@ export function lower(parsed: ParsedFile, file: string, source: string): Compone
       // Whitespace around @slot blocks is not content for the default slot.
       const children = rest.every((c) => c.type === 'text' && !c.value.trim()) ? [] : lowerList(rest)
       scopeKey = parentScope
-      out.push({ kind: 'component', name: node.tag, props, children, fills, region, ...(attach ? { attach } : {}) })
+      out.push({ kind: 'component', name: node.tag, props, ...(models.length ? { models } : {}), children, fills, region, ...(attach ? { attach } : {}) })
       return
     }
     if (node.tag === 'slot') {
@@ -195,16 +220,26 @@ export function lower(parsed: ParsedFile, file: string, source: string): Compone
       out.push({ kind: 'slot', name, fallback })
       return
     }
+    // [(value)] / [(checked)] on a form element: the property, and an event writing it back (copy-on-write).
+    const tag = node.tag
+    const attrs = node.attrs.flatMap((a): Exclude<Attr, { kind: 'model' }>[] => {
+      if (a.kind !== 'model') return [a]
+      const bindable = (a.name === 'value' && ['input', 'select', 'textarea'].includes(tag)) || (a.name === 'checked' && tag === 'input')
+      if (!bindable) fail(`[(${a.name})] on <${tag}>: an element binds two ways only with [(value)] (input, select, textarea) or [(checked)]`, a.start)
+      const type = a.name === 'checked' || tag === 'select' ? 'change' : 'input'
+      return [{ kind: 'prop', name: a.name, expr: a.expr, start: a.start }, { kind: 'event', name: type, expr: writeBack(a.expr, `$event.target.${a.name}`, a.name, a.start), start: a.start }]
+    })
     emitStatic(`<${node.tag}`)
-    const elementEvents = node.attrs.filter((a) => a.kind === 'event')
+    const elementEvents = attrs.filter((a) => a.kind === 'event')
     const dynamic: Extract<IRNode, { kind: 'attr' }>[] = []
-    for (const a of node.attrs) {
+    for (const a of attrs) {
       if (a.kind === 'static') emitStatic(a.value === true ? ` ${a.name}` : ` ${a.name}="${a.value}"`)
       else if (a.kind === 'event') {
         if (!stateful) fail('event bindings need a <script> with state; this component is static', a.start)
         checkHandler(a.expr, file, source, a.start)
         if (inputNames.size) {
-          const exprStart = source.indexOf(a.expr, a.start)
+          const found = source.indexOf(a.expr, a.start)
+          const exprStart = found === -1 ? a.start : found // a generated handler ([(value)]): at the binding
           for (const w of writesTo(a.expr, inputNames)) readOnly(w.name, exprStart + w.start)
         }
       } else {

@@ -1,0 +1,6 @@
+{{-- A form field: its label is read-only, its value is a @model the form binds two ways ([(value)]). --}}
+@input label: string
+@input type: string = 'text'
+@model value: string = ''
+
+<label class="text-field"><span>{{ label }}</span> <input [type]="type" [(value)]="value" autocomplete="off"></label>
