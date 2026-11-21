@@ -98,7 +98,8 @@ test('quiz: an island whose server HTML works without JavaScript (radio options,
   expect(one).toContain('<div class="quiz" data-quiz="quiz-0">')
   expect(one).toContain('<p class="quiz-question" id="quiz-0-q">Pick b</p>')
   expect(one).toMatch(/<cl-island c="[^"]*quiz-choices"[^>]*><div class="quiz-choices">/)
-  expect(one).toMatch(/<div class="quiz-options" role="radiogroup" aria-labelledby="quiz-0-q">.*<input type="radio" name="quiz-0" value="1"[^>]*> (<!--\[0-->)?b(<!--\]-->)?(<!--\[b\d+:-1--><!--\]-->)?<\/label>/s)
+  // Markers where the island's inputs are read (inputs are reactive since clarusjs #217).
+  expect(one).toMatch(/<div class="quiz-options" role="radiogroup" aria-labelledby="quiz-0-q"( data-cl-a="\d+")?>.*<input type="radio" name="quiz-0" value="1"[^>]*> (<!--\[\d+-->)?b(<!--\]-->)?(<!--\[b\d+:-1--><!--\]-->)?<\/label>/s)
   expect(one).toMatch(/<details class="quiz-answer"[^>]*><summary>Show the answer<\/summary><p class="quiz-correct">Answer: b<\/p><p>Because\.<\/p><\/details>/)
 })
 

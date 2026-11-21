@@ -299,3 +299,22 @@ test('#99: multi-line @input types and function-typed inputs are checked, at the
     'src/pages/index.tscl:3 TS2322', // onPick takes a string id
   ])
 })
+
+test('#217: inputs are deeply readonly: mutating one (or its arrays) is a type error; reading and copying are fine', () => {
+  const root = project({
+    'src/components/c.tscl': [
+      '@input user: { name: string; tags: string[] }',
+      '<script>',
+      '  let copy = state({ ...user, tags: [...user.tags] })',
+      "  function edit() { user.name = 'b'; user.tags.push('x'); copy.name = 'ok' }",
+      '</script>',
+      '<p>{{ user.name }} {{ copy.name }}</p>',
+      '',
+    ].join('\n'),
+  })
+  const result = check({ root, typescript })
+  expect(result.diagnostics.map((d) => `${d.file}:${d.line}:${d.column} ${d.code}`)).toEqual([
+    'src/components/c.tscl:4:26 TS2540', // user.name: read-only property
+    'src/components/c.tscl:4:48 TS2339', // push: not on a readonly array
+  ])
+})

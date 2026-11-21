@@ -4,11 +4,12 @@
 import { parse } from './serialize.ts'
 import { scope } from './signals.ts'
 
-type IslandModule = { attach(root: Element, props: Record<string, unknown>, state?: Record<string, unknown>): void }
+type IslandModule = { attach(root: Element, props: Record<string, unknown>, state?: Record<string, unknown>): void | ((props: Record<string, unknown>) => void) }
 type Load = (src: string) => Promise<IslandModule>
 
 // Islands scheduled or loading. `data-cl-ready` is set only after attach() succeeds.
 const loading = new WeakSet<Element>()
+const updates = new WeakMap<Element, (props: Record<string, unknown>) => void>()
 // Each attached island's disposer: everything its attach() wired (effects, listeners) is released by it.
 const attached = new Map<Element, () => void>()
 
@@ -86,7 +87,11 @@ async function attachOne(el: Element, load: Load, recorded: ReturnType<typeof re
     return
   }
   try {
-    attached.set(el, scope(() => mod.attach(el, props, state)))
+    attached.set(el, scope(() => {
+      // An island with inputs returns how to update them: kept for a parent island that passes new props.
+      const update = mod.attach(el, props, state)
+      if (typeof update === 'function') updates.set(el, update)
+    }))
     el.setAttribute('data-cl-ready', '')
   } catch (err) {
     el.setAttribute('data-cl-error', '') // attach may have wired some listeners already: never retry
@@ -150,6 +155,17 @@ function arrive(): void {
   const region = live
   region.textContent = ''
   setTimeout(() => { region.textContent = document.title }, 50)
+}
+
+// A parent island re-rendered this nested island with new props (`next`, not in the page): they go to it in place, so
+// its DOM and state are kept. False when it can't take them (not attached yet, or another component).
+;(globalThis as { __clUpdate?: (el: Element, next: Element) => boolean }).__clUpdate = (el, next) => {
+  const update = updates.get(el)
+  if (!update || el.getAttribute('c') !== next.getAttribute('c')) return false
+  const p = next.getAttribute('p') ?? '{}'
+  el.setAttribute('p', p)
+  update(parse(p) as Record<string, unknown>)
+  return true
 }
 
 // Islands inserted later (an @if branch, a @for row, a re-rendered child) are attached through this hook. The router

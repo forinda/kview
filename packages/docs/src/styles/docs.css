@@ -94,3 +94,7 @@
 .leave-ask { margin: 0; }
 .swap-demo { margin: 16px 0; }
 .swap-status { margin: 8px 0 0; color: var(--muted); }
+
+/* Components inside islands: the hue picker demo. */
+.hue-picker { display: flex; align-items: center; gap: 12px; margin: 16px 0; }
+.swatch { display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--rule); border-left: 12px solid hsl(var(--hue) 70% 50%); }

@@ -135,6 +135,12 @@ export function block(ctx: Ctx, index: number, which: () => number, branches: { 
  * values; when anything it read changes, the old HTML is disposed and replaced, and `wire()` wires the island's own
  * holes and events in the child's slot content again. A stateful child is remounted with its new props.
  */
+/** The one <cl-island> among `nodes` (blank text aside), or null. */
+const onlyIsland = (nodes: Node[]): Element | null => {
+  const kept = nodes.filter((n) => n.nodeType !== 3 || n.textContent!.trim())
+  return kept.length === 1 && (kept[0] as Element).localName === 'cl-island' ? (kept[0] as Element) : null
+}
+
 export function region(ctx: Ctx, index: number, html: () => string, wire: () => void): void {
   const r = scan(ctx).regions[index]
   if (!r) return
@@ -145,6 +151,14 @@ export function region(ctx: Ctx, index: number, html: () => string, wire: () => 
     const next = html()
     untrack(() => {
       if (!first) {
+        // A nested island with new props is updated in place (DOM and state kept), not replaced.
+        const t = document.createElement('template')
+        t.innerHTML = next
+        const between: Node[] = []
+        for (let n = r.start.nextSibling; n && n !== r.end; n = n.nextSibling) between.push(n)
+        const old = onlyIsland(between)
+        const fresh = onlyIsland([...t.content.childNodes])
+        if (old && fresh && (globalThis as { __clUpdate?: (el: Element, next: Element) => boolean }).__clUpdate?.(old, fresh)) return
         dispose?.()
         while (r.start.nextSibling && r.start.nextSibling !== r.end) r.start.nextSibling.remove()
         insertHtml(next, r.end)

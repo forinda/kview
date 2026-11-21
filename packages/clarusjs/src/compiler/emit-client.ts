@@ -14,7 +14,7 @@ export function emitClient(ir: ComponentIR): string {
   const hasRegions = all.some((n) => n.kind === 'component' && n.region >= 0)
   const rendersHtml = hasBlocks || hasFors || hasRegions
   const used = [
-    kinds.has('state') && 'state',
+    (kinds.has('state') || kinds.has('input')) && 'state',
     kinds.has('derived') && 'derived',
     kinds.has('shared') && 'shared',
     hasHoles && 'holes as __cl_holes',
@@ -42,10 +42,17 @@ export function emitClient(ir: ComponentIR): string {
   for (const d of ir.dataImports) out += `import ${d.clause} from '${d.from}'\n`
   for (const line of ir.scriptImports) out += `${line}\n`
   out += `\nexport function attach(__cl_root, __cl_props = {}, __cl_state) {\n`
-  out += inputsLine(ir)
+  // Inputs: read-only signals (writes are compile errors), set from props now and by the returned update.
+  const inputs = ir.inputs.filter((i) => ir.signals.get(i.name) === 'input')
+  const value = (i: (typeof inputs)[number], from: string) =>
+    i.default === undefined ? `${from}.${i.name}` : `${from}.${i.name} === undefined ? (${rewriteClientExpr(i.default, ir.signals)}) : ${from}.${i.name}`
+  for (const i of inputs) out += `  const ${i.name} = state(${value(i, '__cl_props')})\n`
+  out += inputsLine({ ...ir, inputs: ir.inputs.filter((i) => !inputs.includes(i)) })
   if (ir.script) out += indentScript(rewriteClient(ir.script, ir.signals, { stateFromServer: true }))
   const lines = wiring(ir, ir.nodes, undefined, '__cl_root', ir.signals, 0)
   if (lines.length) out += '\n' + lines.map((l) => `  ${l}\n`).join('')
+  // New props from a parent island: each input follows (the loader keeps this, and the parent calls it in place).
+  if (inputs.length) out += `  return (__cl_p) => {\n${inputs.map((i) => `    ${i.name}.set(${value(i, '__cl_p')})\n`).join('')}  }\n`
   return out + '}\n'
 }
 

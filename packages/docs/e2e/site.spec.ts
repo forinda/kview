@@ -816,6 +816,20 @@ test('view transitions: a page change runs inside document.startViewTransition, 
   await expect(page.locator('cl-island[c="view-transitions"]')).toHaveAttribute('data-cl-ready', '') // kept across swaps
 })
 
+test('inputs: a nested island gets new props in place, keeping its own state', async ({ page }) => {
+  await page.goto('/guide/components-in-islands')
+  const swatch = page.locator('cl-island[c="swatch"]')
+  await expect(swatch).toHaveAttribute('data-cl-ready', '')
+  await expect(page.locator('cl-island[c="hue-picker"]')).toHaveAttribute('data-cl-ready', '')
+  await swatch.locator('.swatch-pin').click()
+  await expect(swatch.locator('.swatch-pin')).toHaveText('Pinned')
+  const handle = await swatch.elementHandle()
+  await page.locator('.hue-next').click()
+  await expect(swatch.locator('.swatch-hue')).toHaveText('240°')
+  await expect(swatch.locator('.swatch-pin')).toHaveText('Pinned') // its own state kept
+  expect(await page.evaluate((el) => el!.isConnected, handle)).toBe(true) // the same element, updated in place
+})
+
 test('client routes: pushState and replaceState from the page are not page loads', async ({ page }) => {
   await page.goto('/tour/1')
   await expect(page.locator('cl-island[c="theme-toggle"]')).toHaveAttribute('data-cl-ready', '')

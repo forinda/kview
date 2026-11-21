@@ -1,7 +1,7 @@
 // Syntax tree → IR: static HTML chunks, holes (reactive or not), child components, events. Build-time checks live here.
 import { ClarusError } from './errors.ts'
 import { importNames, type DataImport, type ImportDecl, type InputDecl, type ParsedFile, type TemplateNode } from './parse.ts'
-import { analyzeScript, checkExpr, checkHandler, referencesNames, scriptNames, splitImports, type Signals } from './script.ts'
+import { analyzeScript, writesTo, checkExpr, checkHandler, referencesNames, scriptNames, splitImports, type Signals } from './script.ts'
 
 export type IRNode =
   | { kind: 'static'; html: string }
@@ -46,6 +46,16 @@ export function lower(parsed: ParsedFile, file: string, source: string): Compone
   // A hole is reactive if it reads anything the script declares: a signal directly, or a function/value that may read one.
   // text()'s effect tracks the real dependencies, so over-marking only costs a pair of comment markers.
   const scriptScope = parsed.script ? new Set([...signals.keys(), ...scriptNames(parsed.script.code)]) : new Set<string>()
+  // An island's inputs are read-only signals its parent updates in place: what reads them is reactive, and writing
+  // to one is an error (to change a value locally, copy it into state()).
+  const inputNames = new Set(stateful ? parsed.inputs.map((i) => i.name).filter((name) => !signals.has(name)) : [])
+  for (const name of inputNames) {
+    signals.set(name, 'input')
+    scriptScope.add(name)
+  }
+  const readOnly = (name: string, at: number): never =>
+    fail(`@input ${name} is read-only: inputs belong to the parent. Copy it to change it here: let local = state(${name})`, at)
+  if (parsed.script && inputNames.size) for (const w of writesTo(parsed.script.code, inputNames)) readOnly(w.name, parsed.script.start + w.start)
   for (const d of parsed.dataImports) {
     // In an island the import is bundled for the browser, like a script import.
     if (stateful && d.from.startsWith('node:')) fail(`\`${d.from}\` can't be imported in an island: its imports are bundled for the browser`, d.start)
@@ -193,6 +203,10 @@ export function lower(parsed: ParsedFile, file: string, source: string): Compone
       else if (a.kind === 'event') {
         if (!stateful) fail('event bindings need a <script> with state; this component is static', a.start)
         checkHandler(a.expr, file, source, a.start)
+        if (inputNames.size) {
+          const exprStart = source.indexOf(a.expr, a.start)
+          for (const w of writesTo(a.expr, inputNames)) readOnly(w.name, exprStart + w.start)
+        }
       } else {
         if (/^on/i.test(a.name)) fail(`use (${a.name.slice(2).toLowerCase()}) for events, not an ${a.name} attribute`, a.start)
         // srcdoc is a whole HTML document: binding data into it is HTML injection, so it stays static.

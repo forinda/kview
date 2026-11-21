@@ -81,7 +81,9 @@ export function generateTs(source: string, file: string, options: { loader?: str
     loaderSpan = [start, code.length]
     emit('\n')
   }
-  emit('\nexport default function __cl_check(__cl_props: Inputs) {\n')
+  // Inputs are read-only, all the way down: they belong to the parent (copy one into state() to change it here).
+  emit('type __cl_Readonly<T> = T extends (...args: any[]) => unknown ? T : T extends object ? { readonly [K in keyof T]: __cl_Readonly<T[K]> } : T\n')
+  emit('\nexport default function __cl_check(__cl_props: __cl_Readonly<Inputs>) {\n')
   if (parsed.inputs.length) {
     emit('  const { ')
     parsed.inputs.forEach((input, i) => {
@@ -151,7 +153,7 @@ export function generateTs(source: string, file: string, options: { loader?: str
           // reported on the variable, which maps to the tag.
           emit('  { const ')
           point('__cl_p', node.start)
-          emit(`: ${alias(node.tag)} = { `)
+          emit(`: __cl_Readonly<${alias(node.tag)}> = { `) // a child reads its inputs only, so readonly values fit
           for (const a of node.attrs) {
             if (a.kind !== 'prop') continue
             copy(a.name, a.start + 1)

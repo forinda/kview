@@ -64,7 +64,8 @@ test('on* attributes are a located build error', () => {
 })
 
 test('non-reactive attributes in a stateful component get no marker', async () => {
-  const out = await render(`@input u: string = '/a'\n<script>let n = state(0)</script>\n<a [href]="u" (click)="n++">{{ n }}</a>`)
+  // A constant never changes. (Inputs of an island are reactive since #217: an attribute reading one has a marker.)
+  const out = await render(`<script>let n = state(0)</script>\n<a [href]="'/' + 'a'" (click)="n++">{{ n }}</a>`)
   expect(out).not.toContain('data-cl-a')
   expect(out).toContain('href="/a"')
 })

@@ -3,7 +3,8 @@ import { parse as acornParse, parseExpressionAt } from 'acorn'
 import { ClarusError } from './errors.ts'
 
 // state(): local state; derived(): computed; shared(store): a local name for a store's signal (see runtime/signals.ts).
-export type Signals = Map<string, 'state' | 'derived' | 'shared'>
+// input: an @input of an island, a read-only signal its parent updates (see runtime: attach returns an update).
+export type Signals = Map<string, 'state' | 'derived' | 'shared' | 'input'>
 
 // Minimal ESTree node view; acorn produces ESTree with start/end offsets.
 type N = { type: string; start: number; end: number; [key: string]: any }
@@ -302,6 +303,29 @@ export function referencesSignal(expr: string, signals: Signals): boolean {
 }
 
 /** Does `expr` read any of `names`? */
+/**
+ * Assignments and ++/-- to any of `names` in a script or event handler, skipping places where a local declaration
+ * shadows the name: where each written name starts in `code`.
+ */
+export function writesTo(code: string, names: Set<string>): { name: string; start: number }[] {
+  const found: { name: string; start: number }[] = []
+  const visit = (active: Set<string>, entered: WeakSet<N>): Hook => (node, parent, key) => {
+    if (!entered.has(node)) {
+      const shadowed = [...scopeNames(node)].filter((n) => active.has(n))
+      if (shadowed.length) {
+        entered.add(node)
+        print(node, code, visit(new Set([...active].filter((n) => !shadowed.includes(n))), entered), parent, key)
+        return ''
+      }
+    }
+    const target = node.type === 'AssignmentExpression' ? node.left : node.type === 'UpdateExpression' ? node.argument : null
+    if (target?.type === 'Identifier' && active.has(target.name)) found.push({ name: target.name, start: target.start })
+    return undefined
+  }
+  print(parseScript(code), code, visit(names, new WeakSet()))
+  return found
+}
+
 export function referencesNames(expr: string, names: Set<string>): boolean {
   let found = false
   print(parseExpr(expr), expr, (node, parent, key) => {
